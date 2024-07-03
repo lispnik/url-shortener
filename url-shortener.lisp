@@ -1,5 +1,3 @@
-(ql:quickload '("clog" "cl-ksuid" "dbi" "dbd-sqlite3" "alexandria" "cl-ppcre"))
-
 (defpackage #:url-shortener
   (:use #:common-lisp
 	#:clog)
@@ -41,6 +39,13 @@ update urls set accessed_last = current_timestamp, accessed_count = accessed_cou
 where url_shortened_path = ? returning url as RESULT")))
     (getf (dbi:fetch (dbi:execute query (list shortened-url))) :result)))
 
+(defun make-shortener-handler (url-input url-output)
+  (lambda (obj)
+    (declare (ignore obj))
+    (let ((url-input (string-trim " " (value url-input))))
+      (setf (text url-output)
+	    (format nil "/re?~A" (create-shortened url-input))))))
+
 (defun on-new-window (body)
   (clog-web:clog-web-initialize body)
   (let* ((input (create-div body))
@@ -48,27 +53,18 @@ where url_shortened_path = ? returning url as RESULT")))
 	 (ok-button (create-button input :content "OK"))
 	 (output (create-div body))
 	 (url-output (create-span output))
-	 (copy-button (create-img output)))
-    (set-on-click ok-button
-		  (lambda (obj)
-		    (setf (text url-output)
-			  (format nil "/re?~A" (create-shortened (value url-input))))))
-    (set-on-click copy-button
-		  'copy-button-handler)))
+	 (copy-button (create-button output :content "Copy"))
+	 (shortener-handler (make-shortener-handler url-input url-output)))
+    (set-on-click ok-button shortener-handler)
+    (set-on-change url-input shortener-handler)
+    (set-on-click copy-button 'copy-button-handler)))
 
 (defun redirector-middleware (app)
   (lambda (env)
     (if (string= (getf env :path-info) "/re")
 	(a:if-let ((url-shortened-path  (getf env :query-string)))
 	  (a:if-let ((url (lookup-shortened url-shortened-path)))
-	    `(301 (:location ,url
-                   ;; FIXME some combination of this crap prevents caching
-;;                   :cache-control "no-store, no-cache, must-revalidate, post-check=0, pre-check=0"
-                   ;; :cache-control "no-cache"
-                   ;; :cache-control "no-cache, no-store, must-revalidate"
-                   ;; :pragma "no-cache"
-                   ;; :expires 0
-                   ))
+	    `(302 (:location ,url))
 	    (funcall app env))
 	  (funcall app env))
 	(funcall app env))))
